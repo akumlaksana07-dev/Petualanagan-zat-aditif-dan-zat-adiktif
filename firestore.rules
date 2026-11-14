@@ -77,8 +77,7 @@ service cloud.firestore {
         && resource.data.score >= 0;
 
       allow list: if resource.data.score is int
-        && resource.data.score >= 0
-        && resource.data.highestLevel >= 1;
+        && resource.data.score >= 0;
 
       allow create: if isSignedIn()
         && isValidId(entryId)

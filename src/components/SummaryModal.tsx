@@ -1,14 +1,19 @@
 import React from 'react';
+import { User } from 'firebase/auth';
 import { ArrowRight, Home, RotateCcw, Trophy } from 'lucide-react';
 import { SUBSTANCES } from '../data/substances';
 import { SessionStats } from '../types/game';
+import { GoogleIcon } from './GoogleIcon';
 
 interface SummaryModalProps {
   mode: 'LEVEL_COMPLETE' | 'GAME_OVER' | 'VICTORY';
   levelTitle: string;
   stats: SessionStats;
   rankPosition: number | null;
+  currentUser: User | null;
+  authLoading: boolean;
   hasNextLevel: boolean;
+  onSignInGoogle: () => void;
   onNextLevel?: () => void;
   onRetryLevel: () => void;
   onOpenLeaderboard: () => void;
@@ -20,7 +25,10 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
   levelTitle,
   stats,
   rankPosition,
+  currentUser,
+  authLoading,
   hasNextLevel,
+  onSignInGoogle,
   onNextLevel,
   onRetryLevel,
   onOpenLeaderboard,
@@ -74,6 +82,23 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
           {heading}
         </h2>
         <p className="text-sm text-slate-300 mt-2 leading-relaxed">{subheading}</p>
+
+        {/* Google Sign-In prompt if not yet authenticated */}
+        {!currentUser && (
+          <div className="mt-4 p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs text-slate-300">
+              Masuk dengan Google untuk menyimpan skormu ke daftar pemain skor terbanyak!
+            </div>
+            <button
+              onClick={onSignInGoogle}
+              disabled={authLoading}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <GoogleIcon className="w-4 h-4" />
+              <span>{authLoading ? 'Menghubungkan...' : 'Sign In pakai Google'}</span>
+            </button>
+          </div>
+        )}
 
         {/* Metrics Strip */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-6">

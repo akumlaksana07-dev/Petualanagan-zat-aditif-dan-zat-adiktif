@@ -20,6 +20,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { LeaderboardEntry } from '../types/game';
@@ -27,7 +28,11 @@ import { LeaderboardEntry } from '../types/game';
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+
 const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({
+  prompt: 'select_account',
+});
 
 export enum OperationType {
   CREATE = 'create',
@@ -97,8 +102,24 @@ export function subscribeAuth(callback: (user: User | null) => void) {
 }
 
 export async function signInWithGoogle(): Promise<User> {
-  const result = await signInWithPopup(auth, googleProvider);
-  return result.user;
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    return result.user;
+  } catch (error: unknown) {
+    const code = (error as { code?: string })?.code || '';
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      throw new Error('Jendela login Google ditutup sebelum proses selesai. Silakan coba lagi.');
+    }
+    if (code === 'auth/popup-blocked') {
+      throw new Error('Popup login diblokir oleh browser. Izinkan popup untuk situs ini lalu coba lagi.');
+    }
+    if (code === 'auth/unauthorized-domain') {
+      throw new Error('Domain aplikasi belum terdaftar pada Authorized Domains Firebase Auth.');
+    }
+    throw error instanceof Error
+      ? error
+      : new Error('Gagal masuk dengan akun Google. Silakan coba lagi.');
+  }
 }
 
 export async function logoutUser(): Promise<void> {
@@ -107,7 +128,7 @@ export async function logoutUser(): Promise<void> {
 
 export function sanitizeNickname(raw: string): string {
   const cleaned = raw.trim().slice(0, 36);
-  return cleaned.length > 0 ? cleaned : 'Peneliti Mario';
+  return cleaned.length > 0 ? cleaned : 'Mario Peneliti';
 }
 
 export function subscribeLeaderboard(
@@ -115,7 +136,13 @@ export function subscribeLeaderboard(
   onError?: (err: unknown) => void
 ) {
   const path = 'leaderboard';
-  const q = query(collection(db, path), orderBy('score', 'desc'), limit(20));
+  // Single-field where + orderBy aligns with Firestore static rule evaluation on resource.data.score
+  const q = query(
+    collection(db, path),
+    where('score', '>=', 0),
+    orderBy('score', 'desc'),
+    limit(20)
+  );
 
   return onSnapshot(
     q,
@@ -138,8 +165,11 @@ export function subscribeLeaderboard(
       onData(entries);
     },
     (error) => {
-      if (onError) onError(error);
-      else handleFirestoreError(error, OperationType.LIST, path);
+      if (onError) {
+        onError(error);
+      } else {
+        handleFirestoreError(error, OperationType.LIST, path);
+      }
     }
   );
 }
@@ -161,7 +191,7 @@ export async function submitLeaderboardScore(params: {
   const safeLevel = Math.max(1, Math.min(3, Math.floor(params.highestLevel)));
   const safeQuizTotal = Math.max(0, Math.min(500, Math.floor(params.quizTotal)));
   const safeQuizCorrect = Math.max(0, Math.min(safeQuizTotal, Math.floor(params.quizCorrect)));
-  const safeName = sanitizeNickname(params.playerName || user.displayName || 'Pemain Mario');
+  const safeName = sanitizeNickname(params.playerName || user.displayName || 'Mario Peneliti');
 
   try {
     const snap = await getDoc(docRef);
@@ -189,7 +219,10 @@ export async function submitLeaderboardScore(params: {
       const bestLevel = Math.max(prevLevel, safeLevel);
       const bestBoss = prevBoss || Boolean(params.bossDefeated);
       const bestQuizCorrect = safeScore >= prevScore ? safeQuizCorrect : prevQuizCorrect;
-      const bestQuizTotal = Math.max(bestQuizCorrect, safeScore >= prevScore ? safeQuizTotal : prevQuizTotal);
+      const bestQuizTotal = Math.max(
+        bestQuizCorrect,
+        safeScore >= prevScore ? safeQuizTotal : prevQuizTotal
+      );
 
       await updateDoc(docRef, {
         playerName: safeName,

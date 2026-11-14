@@ -6,6 +6,7 @@ import {
   ArrowUp,
   BookOpen,
   Crosshair,
+  GraduationCap,
   Heart,
   Pause,
   Play,
@@ -15,8 +16,10 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
+import { DeveloperProfileModal } from './components/DeveloperProfileModal';
 import { EncyclopediaModal } from './components/EncyclopediaModal';
 import { GameCanvas, TouchInputState } from './components/GameCanvas';
+import { GoogleIcon } from './components/GoogleIcon';
 import { LeaderboardModal } from './components/LeaderboardModal';
 import { QuizModal } from './components/QuizModal';
 import { StoryIntroModal } from './components/StoryIntroModal';
@@ -105,7 +108,10 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showDeveloperProfile, setShowDeveloperProfile] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   const [discovery, setDiscovery] = useState<DiscoveryBanner | null>(null);
   const [activeQuiz, setActiveQuiz] = useState<QuizQuestion | null>(null);
@@ -130,7 +136,13 @@ export default function App() {
       if (user?.displayName) {
         setPlayerName((prev) => {
           if (!prev || prev === 'Mario Peneliti') {
-            return sanitizeNickname(user.displayName || 'Mario Peneliti');
+            const nextName = sanitizeNickname(user.displayName || 'Mario Peneliti');
+            try {
+              localStorage.setItem('petualangan_zat_nickname', nextName);
+            } catch {
+              // Ignore
+            }
+            return nextName;
           }
           return prev;
         });
@@ -138,8 +150,8 @@ export default function App() {
     });
     const unsubLb = subscribeLeaderboard(
       (entries) => setLeaderboardEntries(entries),
-      () => {
-        // Keep graceful local experience if leaderboard is offline
+      (err) => {
+        console.error('Leaderboard subscription error:', err);
       }
     );
     return () => {
@@ -195,7 +207,11 @@ export default function App() {
           bossDefeated: snapshotStats.bossDefeated,
           quizCorrect: snapshotStats.quizCorrect,
           quizTotal: snapshotStats.quizTotal,
-        }).catch(() => {});
+        }).catch((err) => {
+          setAuthError(
+            err instanceof Error ? err.message : 'Gagal menyimpan skor ke papan peringkat.'
+          );
+        });
       }
     },
     [currentUser, playerName]
@@ -286,7 +302,6 @@ export default function App() {
 
   const handleAfterLevelComplete = () => {
     if (selectedLevelIndex < levels.length - 1) {
-      // Launch narrative transition + educational mini-game before next level!
       setStatus('BETWEEN_LEVEL_MINIGAME');
     } else {
       setStatus('VICTORY');
@@ -353,32 +368,68 @@ export default function App() {
 
   const handleSignInGoogle = async () => {
     setAuthError(null);
+    setSyncStatus(null);
+    setAuthLoading(true);
     try {
       const user = await signInWithGoogle();
       const chosenName = sanitizeNickname(
-        playerName !== 'Mario Peneliti' ? playerName : user.displayName || 'Mario Peneliti'
+        playerName && playerName !== 'Mario Peneliti'
+          ? playerName
+          : user.displayName || 'Mario Peneliti'
       );
       setPlayerName(chosenName);
-      // Immediately sync any existing local best or current score after signing in
-      const scoreToSave = Math.max(stats.score, localBest?.score ?? 0);
-      if (scoreToSave > 0) {
-        await submitLeaderboardScore({
-          playerName: chosenName,
-          score: scoreToSave,
-          highestLevel: Math.max(selectedLevelIndex + 1, localBest?.highestLevel ?? 1),
-          bossDefeated: Boolean(stats.bossDefeated || localBest?.bossDefeated),
-          quizCorrect: Math.max(stats.quizCorrect, localBest?.quizCorrect ?? 0),
-          quizTotal: Math.max(stats.quizTotal, localBest?.quizTotal ?? 0),
-        });
+      try {
+        localStorage.setItem('petualangan_zat_nickname', chosenName);
+      } catch {
+        // Ignore
       }
+
+      // Immediately register or update player's entry in Firestore Leaderboard
+      const scoreToSave = Math.max(stats.score, localBest?.score ?? 0);
+      await submitLeaderboardScore({
+        playerName: chosenName,
+        score: scoreToSave,
+        highestLevel: Math.max(selectedLevelIndex + 1, localBest?.highestLevel ?? 1),
+        bossDefeated: Boolean(stats.bossDefeated || localBest?.bossDefeated),
+        quizCorrect: Math.max(stats.quizCorrect, localBest?.quizCorrect ?? 0),
+        quizTotal: Math.max(stats.quizTotal, localBest?.quizTotal ?? 0),
+      });
+      setSyncStatus(`Berhasil masuk sebagai ${chosenName} dan terdaftar di papan peringkat!`);
     } catch (err) {
       setAuthError(
         err instanceof Error ? err.message : 'Gagal masuk dengan Google. Silakan coba kembali.'
+      );
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    if (!currentUser) return;
+    setAuthError(null);
+    setSyncStatus(null);
+    const chosenName = sanitizeNickname(playerName);
+    const scoreToSave = Math.max(stats.score, localBest?.score ?? 0);
+    try {
+      await submitLeaderboardScore({
+        playerName: chosenName,
+        score: scoreToSave,
+        highestLevel: Math.max(selectedLevelIndex + 1, localBest?.highestLevel ?? 1),
+        bossDefeated: Boolean(stats.bossDefeated || localBest?.bossDefeated),
+        quizCorrect: Math.max(stats.quizCorrect, localBest?.quizCorrect ?? 0),
+        quizTotal: Math.max(stats.quizTotal, localBest?.quizTotal ?? 0),
+      });
+      setSyncStatus('Nama dan skor berhasil diperbarui di daftar pemain skor terbanyak.');
+    } catch (err) {
+      setAuthError(
+        err instanceof Error ? err.message : 'Gagal memperbarui skor ke papan peringkat.'
       );
     }
   };
 
   const handleSignOut = async () => {
+    setSyncStatus(null);
+    setAuthError(null);
     await logoutUser();
   };
 
@@ -407,7 +458,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       {/* Top Bar Contract: Brand — Status/Links — Actions */}
       <header className="w-full border-b border-slate-800 bg-slate-900/90 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-6">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <button
             onClick={() => setStatus('TITLE_MENU')}
             className="text-lg font-extrabold tracking-tight text-white hover:text-emerald-400 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
@@ -416,7 +467,7 @@ export default function App() {
           </button>
 
           {status !== 'TITLE_MENU' && status !== 'STORY_INTRO' ? (
-            <div className="hidden md:flex items-center gap-4 text-xs text-slate-300 font-medium whitespace-nowrap">
+            <div className="hidden lg:flex items-center gap-4 text-xs text-slate-300 font-medium whitespace-nowrap">
               <span className="text-white font-semibold">{currentLevel.title}</span>
               <span aria-hidden="true">·</span>
               <span className="font-mono-tabular text-amber-400 font-bold">
@@ -442,21 +493,32 @@ export default function App() {
               )}
             </div>
           ) : (
-            <nav className="hidden md:flex items-center gap-6 text-sm text-slate-300">
+            <nav className="hidden lg:flex items-center gap-6 text-sm text-slate-300">
               <span className="whitespace-nowrap shrink-0">Materi: Zat Aditif &amp; Adiktif</span>
               <span aria-hidden="true">·</span>
-              <span className="whitespace-nowrap shrink-0">3 Dunia + Mini-Game + Bos Akhir</span>
+              <span className="whitespace-nowrap shrink-0">SMP Negeri Perisai</span>
             </nav>
           )}
 
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleToggleMute}
-              className="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors cursor-pointer"
+              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors cursor-pointer"
               aria-label={muted ? 'Nyalakan Suara' : 'Matikan Suara'}
               title={muted ? 'Nyalakan Suara' : 'Matikan Suara'}
             >
               {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            </button>
+
+            <button
+              onClick={() => {
+                if (status === 'PLAYING') setStatus('PAUSED');
+                setShowDeveloperProfile(true);
+              }}
+              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <GraduationCap className="w-4 h-4 text-emerald-400" />
+              <span>Profil Pengembang</span>
             </button>
 
             <button
@@ -475,13 +537,34 @@ export default function App() {
                 if (status === 'PLAYING') setStatus('PAUSED');
                 setShowEncyclopedia(true);
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="hidden md:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <BookOpen className="w-4 h-4" />
-              <span className="hidden sm:inline">Pustaka Zat</span>
+              <span>Pustaka Zat</span>
             </button>
 
-            {status === 'PLAYING' || status === 'PAUSED' ? (
+            {!currentUser ? (
+              <button
+                onClick={handleSignInGoogle}
+                disabled={authLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+              >
+                <GoogleIcon className="w-3.5 h-3.5" />
+                <span>{authLoading ? 'Masuk...' : 'Sign In Google'}</span>
+              </button>
+            ) : (
+              status !== 'PLAYING' &&
+              status !== 'PAUSED' && (
+                <button
+                  onClick={() => setShowLeaderboard(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-950/70 border border-emerald-700 text-emerald-300 text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <span>{sanitizeNickname(playerName)}</span>
+                </button>
+              )
+            )}
+
+            {(status === 'PLAYING' || status === 'PAUSED') && (
               <button
                 onClick={handleTogglePause}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0"
@@ -489,7 +572,7 @@ export default function App() {
                 {status === 'PAUSED' ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
                 <span>{status === 'PAUSED' ? 'Lanjut' : 'Jeda'}</span>
               </button>
-            ) : null}
+            )}
           </div>
         </div>
       </header>
@@ -503,12 +586,17 @@ export default function App() {
             highScore={highScore}
             topPlayers={leaderboardEntries}
             playerName={playerName}
+            currentUser={currentUser}
+            authLoading={authLoading}
+            authError={authError}
             onChangePlayerName={handleNicknameChange}
+            onSignInGoogle={handleSignInGoogle}
             onSelectLevel={setSelectedLevelIndex}
             onStartGame={handleStartFromTitle}
             onOpenStoryIntro={() => setStatus('STORY_INTRO')}
             onOpenEncyclopedia={() => setShowEncyclopedia(true)}
             onOpenLeaderboard={() => setShowLeaderboard(true)}
+            onOpenDeveloperProfile={() => setShowDeveloperProfile(true)}
           />
         ) : (
           <div className="w-full max-w-5xl mx-auto px-3 sm:px-4 py-4 flex flex-col gap-3">
@@ -618,35 +706,38 @@ export default function App() {
               />
 
               {/* Pause Overlay */}
-              {status === 'PAUSED' && !showEncyclopedia && !showLeaderboard && (
-                <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs rounded-xl flex items-center justify-center p-4">
-                  <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm text-center shadow-2xl">
-                    <h2 className="text-2xl font-extrabold text-white mb-1">Permainan Dijeda</h2>
-                    <p className="text-xs text-slate-400 mb-5">{currentLevel.title}</p>
-                    <div className="flex flex-col gap-2.5">
-                      <button
-                        onClick={() => setStatus('PLAYING')}
-                        className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm cursor-pointer"
-                      >
-                        Lanjutkan
-                      </button>
-                      <button
-                        onClick={retryCurrentLevel}
-                        className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-sm flex items-center justify-center gap-2 cursor-pointer"
-                      >
-                        <RotateCcw className="w-4 h-4" />
-                        <span>Ulangi Level</span>
-                      </button>
-                      <button
-                        onClick={() => setStatus('TITLE_MENU')}
-                        className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-sm cursor-pointer"
-                      >
-                        Kembali ke Menu Utama
-                      </button>
+              {status === 'PAUSED' &&
+                !showEncyclopedia &&
+                !showLeaderboard &&
+                !showDeveloperProfile && (
+                  <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs rounded-xl flex items-center justify-center p-4">
+                    <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm text-center shadow-2xl">
+                      <h2 className="text-2xl font-extrabold text-white mb-1">Permainan Dijeda</h2>
+                      <p className="text-xs text-slate-400 mb-5">{currentLevel.title}</p>
+                      <div className="flex flex-col gap-2.5">
+                        <button
+                          onClick={() => setStatus('PLAYING')}
+                          className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm cursor-pointer"
+                        >
+                          Lanjutkan
+                        </button>
+                        <button
+                          onClick={retryCurrentLevel}
+                          className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-sm flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                          <span>Ulangi Level</span>
+                        </button>
+                        <button
+                          onClick={() => setStatus('TITLE_MENU')}
+                          className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-sm cursor-pointer"
+                        >
+                          Kembali ke Menu Utama
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
             </div>
 
             {/* Educational Discovery Strip + Touch/Keyboard Controls */}
@@ -771,7 +862,10 @@ export default function App() {
           levelTitle={currentLevel.title}
           stats={stats}
           rankPosition={currentRankPosition}
+          currentUser={currentUser}
+          authLoading={authLoading}
           hasNextLevel={selectedLevelIndex < levels.length - 1}
+          onSignInGoogle={handleSignInGoogle}
           onNextLevel={handleAfterLevelComplete}
           onRetryLevel={retryCurrentLevel}
           onOpenLeaderboard={() => setShowLeaderboard(true)}
@@ -786,12 +880,20 @@ export default function App() {
           localBest={localBest}
           currentUser={currentUser}
           playerName={playerName}
+          authLoading={authLoading}
+          syncStatus={syncStatus}
           onChangePlayerName={handleNicknameChange}
           onSignInGoogle={handleSignInGoogle}
+          onSyncNow={handleSyncNow}
           onSignOut={handleSignOut}
           onClose={() => setShowLeaderboard(false)}
           authError={authError}
         />
+      )}
+
+      {/* Developer Profile Modal */}
+      {showDeveloperProfile && (
+        <DeveloperProfileModal onClose={() => setShowDeveloperProfile(false)} />
       )}
 
       {/* Substance Encyclopedia Modal */}

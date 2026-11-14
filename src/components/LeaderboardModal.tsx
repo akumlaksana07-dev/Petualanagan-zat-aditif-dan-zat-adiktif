@@ -1,15 +1,19 @@
 import React from 'react';
-import { Crown, LogIn, LogOut, Trophy, X } from 'lucide-react';
+import { Check, Crown, LogOut, Trophy, X } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { LeaderboardEntry } from '../types/game';
+import { GoogleIcon } from './GoogleIcon';
 
 interface LeaderboardModalProps {
   entries: LeaderboardEntry[];
   localBest: LeaderboardEntry | null;
   currentUser: User | null;
   playerName: string;
+  authLoading: boolean;
+  syncStatus: string | null;
   onChangePlayerName: (name: string) => void;
   onSignInGoogle: () => void;
+  onSyncNow: () => void;
   onSignOut: () => void;
   onClose: () => void;
   authError: string | null;
@@ -20,8 +24,11 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
   localBest,
   currentUser,
   playerName,
+  authLoading,
+  syncStatus,
   onChangePlayerName,
   onSignInGoogle,
+  onSyncNow,
   onSignOut,
   onClose,
   authError,
@@ -40,9 +47,9 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
           <div className="flex items-center gap-2.5">
             <Trophy className="w-5 h-5 text-amber-400" />
             <div>
-              <h2 className="text-xl font-bold text-white">Papan Peringkat Pemain</h2>
+              <h2 className="text-xl font-bold text-white">Papan Peringkat Pemain Skor Terbanyak</h2>
               <p className="text-xs text-slate-400">
-                Skor diperbarui otomatis setiap selesai level, mini-game, atau mengalahkan Bos Akhir.
+                Masuk dengan akun Google agar skormu tercatat otomatis ke daftar pemain skor terbanyak.
               </p>
             </div>
           </div>
@@ -56,29 +63,45 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
         </div>
 
         {/* Account & Nickname Strip */}
-        <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex-1">
-            <label htmlFor="lb-nickname" className="block text-xs font-medium text-slate-400 mb-1">
-              Nama Tampilan Peringkat
-            </label>
-            <input
-              id="lb-nickname"
-              type="text"
-              maxLength={32}
-              value={playerName}
-              onChange={(e) => onChangePlayerName(e.target.value)}
-              placeholder="Masukkan nama panggilan..."
-              className="w-full sm:max-w-xs px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500"
-            />
+        <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/50 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+          <div className="flex-1 flex flex-col sm:flex-row sm:items-end gap-2.5">
+            <div className="flex-1">
+              <label htmlFor="lb-nickname" className="block text-xs font-medium text-slate-400 mb-1">
+                Nama Tampilan di Papan Peringkat
+              </label>
+              <input
+                id="lb-nickname"
+                type="text"
+                maxLength={32}
+                value={playerName}
+                onChange={(e) => onChangePlayerName(e.target.value)}
+                placeholder="Masukkan nama panggilan..."
+                className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            {currentUser && (
+              <button
+                onClick={onSyncNow}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <Check className="w-4 h-4" />
+                <span>Simpan Nama &amp; Skor</span>
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
             {currentUser ? (
               <div className="flex items-center gap-3">
                 <div className="text-right">
-                  <div className="text-xs font-semibold text-emerald-400">Terhubung ke Peringkat Global</div>
+                  <div className="text-xs font-semibold text-emerald-400">
+                    {currentUser.displayName || 'Akun Google Terhubung'}
+                  </div>
                   <div className="text-xs text-slate-300">
-                    {userIndex >= 0 ? `Peringkat Kamu: #${userIndex + 1}` : 'Mainkan level untuk masuk peringkat'}
+                    {userIndex >= 0
+                      ? `Peringkat Kamu: #${userIndex + 1}`
+                      : 'Siap mencatat skor terbaik'}
                   </div>
                 </div>
                 <button
@@ -92,14 +115,21 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
             ) : (
               <button
                 onClick={onSignInGoogle}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                disabled={authLoading}
+                className="inline-flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0 shadow-sm"
               >
-                <LogIn className="w-4 h-4" />
-                <span>Masuk Google untuk Simpan Skor Global</span>
+                <GoogleIcon className="w-4 h-4" />
+                <span>{authLoading ? 'Menghubungkan Google...' : 'Sign In pakai Google'}</span>
               </button>
             )}
           </div>
         </div>
+
+        {syncStatus && (
+          <div className="px-6 py-2 bg-emerald-950/70 border-b border-emerald-800 text-xs text-emerald-200">
+            {syncStatus}
+          </div>
+        )}
 
         {authError && (
           <div className="px-6 py-2.5 bg-rose-950/70 border-b border-rose-800 text-xs text-rose-200">
@@ -126,10 +156,10 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
             <div className="py-12 text-center">
               <Crown className="w-8 h-8 text-slate-600 mx-auto mb-2" />
               <div className="text-sm font-semibold text-slate-300">
-                Belum ada skor di papan peringkat global
+                Belum ada pemain di daftar skor terbanyak
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                Masuk dengan Google dan selesaikan Level 1 untuk menjadi peringkat pertama!
+                Klik tombol <strong>Sign In pakai Google</strong> di atas untuk langsung masuk ke papan peringkat global!
               </p>
             </div>
           ) : (
@@ -150,7 +180,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
                     return (
                       <tr
                         key={entry.id}
-                        className={isMe ? 'bg-emerald-950/30' : 'hover:bg-slate-800/30'}
+                        className={isMe ? 'bg-emerald-950/35' : 'hover:bg-slate-800/30'}
                       >
                         <td className="py-3 pr-4 font-mono-tabular font-bold text-slate-200">
                           #{idx + 1}
