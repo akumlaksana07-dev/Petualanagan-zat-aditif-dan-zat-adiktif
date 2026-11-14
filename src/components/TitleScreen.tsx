@@ -1,8 +1,6 @@
 import React from 'react';
-import { User } from 'firebase/auth';
 import { BookOpen, BookText, GraduationCap, Play, ShieldAlert, Sparkles, Trophy } from 'lucide-react';
 import { LeaderboardEntry, LevelConfig } from '../types/game';
-import { GoogleIcon } from './GoogleIcon';
 
 interface TitleScreenProps {
   levels: LevelConfig[];
@@ -10,11 +8,7 @@ interface TitleScreenProps {
   highScore: number;
   topPlayers: LeaderboardEntry[];
   playerName: string;
-  currentUser: User | null;
-  authLoading: boolean;
-  authError: string | null;
   onChangePlayerName: (name: string) => void;
-  onSignInGoogle: () => void;
   onSelectLevel: (idx: number) => void;
   onStartGame: () => void;
   onOpenStoryIntro: () => void;
@@ -29,11 +23,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   highScore,
   topPlayers,
   playerName,
-  currentUser,
-  authLoading,
-  authError,
   onChangePlayerName,
-  onSignInGoogle,
   onSelectLevel,
   onStartGame,
   onOpenStoryIntro,
@@ -58,7 +48,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               hindari atau injak bahan beracun, selesaikan mini-game uji pangan antar-level, dan taklukkan Bos Akhir.
             </p>
 
-            {/* Player Nickname & Google Sign-In Bar */}
+            {/* Player Nickname Input */}
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <label htmlFor="title-nickname" className="text-xs font-semibold text-slate-300">
                 Nama Pemain:
@@ -70,28 +60,12 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 value={playerName}
                 onChange={(e) => onChangePlayerName(e.target.value)}
                 placeholder="Nama kamu untuk Papan Peringkat"
-                className="px-3.5 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm text-white w-56 focus:outline-none focus:border-emerald-500"
+                className="px-3.5 py-2 rounded-lg bg-slate-950 border border-slate-700 text-sm text-white w-64 focus:outline-none focus:border-emerald-500"
               />
-
-              {currentUser ? (
-                <span className="text-xs font-semibold text-emerald-400">
-                  Masuk sebagai {currentUser.displayName || 'Pemain Google'}
-                </span>
-              ) : (
-                <button
-                  onClick={onSignInGoogle}
-                  disabled={authLoading}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0 shadow-sm"
-                >
-                  <GoogleIcon className="w-4 h-4" />
-                  <span>{authLoading ? 'Menghubungkan...' : 'Sign In pakai Google'}</span>
-                </button>
-              )}
+              <span className="text-xs text-slate-400">
+                Skor otomatis masuk ke daftar peringkat setelah bermain
+              </span>
             </div>
-
-            {authError && (
-              <p className="mt-2 text-xs text-rose-400">{authError}</p>
-            )}
           </div>
 
           <div className="flex flex-col gap-2.5 shrink-0 min-w-[220px]">
@@ -162,7 +136,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </div>
         </div>
 
-        {/* Top-3 Live Leaderboard Preview + Guide */}
+        {/* Top-5 Live Leaderboard Preview + Guide */}
         <div className="py-7 border-b border-slate-800 grid grid-cols-1 lg:grid-cols-12 gap-6 text-sm">
           <div className="lg:col-span-5 p-4 rounded-xl bg-slate-950/70 border border-slate-800">
             <div className="flex items-center justify-between gap-2 mb-3">
@@ -178,21 +152,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               </button>
             </div>
             {topPlayers.length === 0 ? (
-              <div className="space-y-3">
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Belum ada pemain di daftar skor terbanyak. Sign In pakai Google agar skormu otomatis masuk papan peringkat!
-                </p>
-                {!currentUser && (
-                  <button
-                    onClick={onSignInGoogle}
-                    disabled={authLoading}
-                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold transition-colors cursor-pointer"
-                  >
-                    <GoogleIcon className="w-3.5 h-3.5" />
-                    <span>Sign In pakai Google</span>
-                  </button>
-                )}
-              </div>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Belum ada skor tercatat. Masukkan nama pemain di atas dan selesaikan level untuk memuncaki papan peringkat!
+              </p>
             ) : (
               <div className="space-y-2">
                 {topPlayers.slice(0, 5).map((entry, idx) => (

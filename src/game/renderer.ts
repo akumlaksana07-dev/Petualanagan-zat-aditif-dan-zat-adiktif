@@ -21,6 +21,8 @@ interface RenderContext {
   player: PlayerState;
   cameraX: number;
   time: number;
+  shakeX?: number;
+  shakeY?: number;
   questionBlocks: QuestionBlock[];
   collectibles: CollectibleItem[];
   enemies: EnemyEntity[];
@@ -31,8 +33,15 @@ interface RenderContext {
 }
 
 export function renderGame(rc: RenderContext) {
-  const { ctx, level, cameraX, time } = rc;
+  const { ctx, level, cameraX, time, shakeX = 0, shakeY = 0 } = rc;
   ctx.save();
+  ctx.fillStyle = '#090D16';
+  ctx.fillRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+
+  // Screen shake transform
+  if (shakeX !== 0 || shakeY !== 0) {
+    ctx.translate(shakeX, shakeY);
+  }
 
   // 1. Sky & Parallax Background
   drawBackground(ctx, level, cameraX, time);
@@ -89,12 +98,63 @@ export function renderGame(rc: RenderContext) {
     drawProjectile(ctx, proj);
   }
 
-  // 11. Particles
+  // 11. Particles (squares, starbursts, light sparkles, expanding halo rings)
   for (const p of rc.particles) {
+    const progress = 1 - Math.max(0, p.life / p.maxLife);
     const alpha = Math.max(0, p.life / p.maxLife);
+    ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+
+    if (p.shape === 'ring') {
+      const radius = p.size + progress * 26;
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = Math.max(1, 3 * (1 - progress));
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (p.shape === 'star') {
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rotation ?? 0);
+      const outer = p.size;
+      const inner = p.size * 0.44;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 === 0 ? outer : inner;
+        const angle = (i * Math.PI) / 5 - Math.PI / 2;
+        if (i === 0) ctx.moveTo(Math.cos(angle) * r, Math.sin(angle) * r);
+        else ctx.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
+      }
+      ctx.closePath();
+      ctx.fill();
+      // Bright star center
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(0, 0, outer * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (p.shape === 'sparkle') {
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rotation ?? 0);
+      const flare = p.size * (0.75 + Math.sin(progress * Math.PI * 3) * 0.25);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.moveTo(0, -flare);
+      ctx.quadraticCurveTo(flare * 0.2, -flare * 0.2, flare, 0);
+      ctx.quadraticCurveTo(flare * 0.2, flare * 0.2, 0, flare);
+      ctx.quadraticCurveTo(-flare * 0.2, flare * 0.2, -flare, 0);
+      ctx.quadraticCurveTo(-flare * 0.2, -flare * 0.2, 0, -flare);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(0, 0, flare * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    }
+
+    ctx.restore();
   }
   ctx.globalAlpha = 1;
 
@@ -637,8 +697,6 @@ function drawPlayer(ctx: CanvasRenderingContext2D, player: PlayerState, time: nu
   ctx.translate(cx, cy);
   ctx.scale(player.facing, 1);
 
-  const w = player.w;
-  const h = player.h;
   const walkSwing = player.onGround && Math.abs(player.vx) > 10 ? Math.sin(player.walkFrame * 14) * 5 : 0;
 
   // Legs (Blue overalls)

@@ -8,7 +8,25 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
+      },
+    },
+    build: {
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'firebase',
+                test: /node_modules[\\/](firebase|@firebase)/,
+              },
+              {
+                name: 'react-vendor',
+                test: /node_modules[\\/](react|react-dom|lucide-react)/,
+              },
+            ],
+          },
+        },
       },
     },
     server: {

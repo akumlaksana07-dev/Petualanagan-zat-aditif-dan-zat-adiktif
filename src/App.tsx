@@ -1,5 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { User } from 'firebase/auth';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -19,7 +18,6 @@ import {
 import { DeveloperProfileModal } from './components/DeveloperProfileModal';
 import { EncyclopediaModal } from './components/EncyclopediaModal';
 import { GameCanvas, TouchInputState } from './components/GameCanvas';
-import { GoogleIcon } from './components/GoogleIcon';
 import { LeaderboardModal } from './components/LeaderboardModal';
 import { QuizModal } from './components/QuizModal';
 import { StoryIntroModal } from './components/StoryIntroModal';
@@ -29,11 +27,9 @@ import { TransitionMiniGameModal } from './components/TransitionMiniGameModal';
 import { createLevels } from './data/levels';
 import { QUIZ_QUESTIONS } from './data/substances';
 import {
-  logoutUser,
+  getOrCreatePlayerId,
   sanitizeNickname,
-  signInWithGoogle,
   submitLeaderboardScore,
-  subscribeAuth,
   subscribeLeaderboard,
   testFirestoreConnection,
 } from './lib/firebase';
@@ -97,6 +93,7 @@ export default function App() {
     }
   });
 
+  const [playerId] = useState<string>(() => getOrCreatePlayerId());
   const [playerName, setPlayerName] = useState<string>(() => {
     try {
       return localStorage.getItem('petualangan_zat_nickname') || 'Mario Peneliti';
@@ -105,12 +102,10 @@ export default function App() {
     }
   });
 
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showDeveloperProfile, setShowDeveloperProfile] = useState(false);
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   const [discovery, setDiscovery] = useState<DiscoveryBanner | null>(null);
@@ -126,28 +121,17 @@ export default function App() {
     shoot: false,
   });
 
+  const statsRef = useRef<SessionStats>(INITIAL_STATS);
+  const selectedLevelIndexRef = useRef<number>(selectedLevelIndex);
+  selectedLevelIndexRef.current = selectedLevelIndex;
+  const playerNameRef = useRef<string>(playerName);
+  playerNameRef.current = playerName;
+
   const currentLevel = levels[selectedLevelIndex];
 
-  // Initialize Firebase connection, auth listener, and live leaderboard listener
+  // Initialize Firebase connection and live leaderboard listener
   useEffect(() => {
     testFirestoreConnection();
-    const unsubAuth = subscribeAuth((user) => {
-      setCurrentUser(user);
-      if (user?.displayName) {
-        setPlayerName((prev) => {
-          if (!prev || prev === 'Mario Peneliti') {
-            const nextName = sanitizeNickname(user.displayName || 'Mario Peneliti');
-            try {
-              localStorage.setItem('petualangan_zat_nickname', nextName);
-            } catch {
-              // Ignore
-            }
-            return nextName;
-          }
-          return prev;
-        });
-      }
-    });
     const unsubLb = subscribeLeaderboard(
       (entries) => setLeaderboardEntries(entries),
       (err) => {
@@ -155,12 +139,12 @@ export default function App() {
       }
     );
     return () => {
-      unsubAuth();
       unsubLb();
     };
   }, []);
 
   const handleNicknameChange = (val: string) => {
+    playerNameRef.current = val;
     setPlayerName(val);
     try {
       localStorage.setItem('petualangan_zat_nickname', val);
@@ -171,11 +155,12 @@ export default function App() {
 
   const syncScoreToLeaderboards = useCallback(
     (snapshotStats: SessionStats, reachedLevelNumber: number) => {
-      const cleanName = sanitizeNickname(playerName);
+      const cleanName = sanitizeNickname(playerNameRef.current);
       // Update local best record
       setLocalBest((prev) => {
         const nextBest: LeaderboardEntry = {
-          id: 'local-best',
+          id: playerId,
+          playerId,
           playerName: cleanName,
           score: Math.max(prev?.score ?? 0, snapshotStats.score),
           highestLevel: Math.max(prev?.highestLevel ?? 1, reachedLevelNumber),
@@ -198,23 +183,22 @@ export default function App() {
         return nextBest;
       });
 
-      // Update Global Firestore Leaderboard if authenticated
-      if (currentUser) {
-        submitLeaderboardScore({
-          playerName: cleanName,
-          score: snapshotStats.score,
-          highestLevel: reachedLevelNumber,
-          bossDefeated: snapshotStats.bossDefeated,
-          quizCorrect: snapshotStats.quizCorrect,
-          quizTotal: snapshotStats.quizTotal,
-        }).catch((err) => {
-          setAuthError(
-            err instanceof Error ? err.message : 'Gagal menyimpan skor ke papan peringkat.'
-          );
-        });
-      }
+      // Automatically sync to Firestore Leaderboard
+      submitLeaderboardScore({
+        playerId,
+        playerName: cleanName,
+        score: snapshotStats.score,
+        highestLevel: reachedLevelNumber,
+        bossDefeated: snapshotStats.bossDefeated,
+        quizCorrect: snapshotStats.quizCorrect,
+        quizTotal: snapshotStats.quizTotal,
+      }).catch((err) => {
+        setSyncError(
+          err instanceof Error ? err.message : 'Gagal menyimpan skor ke papan peringkat.'
+        );
+      });
     },
-    [currentUser, playerName]
+    [playerId]
   );
 
   const updateHighScore = useCallback((newScore: number) => {
@@ -231,41 +215,55 @@ export default function App() {
 
   const handleScoreDelta = useCallback(
     (delta: number) => {
-      setStats((prev) => {
-        const nextScore = Math.max(0, prev.score + delta);
-        updateHighScore(nextScore);
-        return { ...prev, score: nextScore };
-      });
+      const nextScore = Math.max(0, statsRef.current.score + delta);
+      const nextStats: SessionStats = { ...statsRef.current, score: nextScore };
+      statsRef.current = nextStats;
+      setStats(nextStats);
+      updateHighScore(nextScore);
     },
     [updateHighScore]
   );
 
   const handleCollectSafe = useCallback((substanceId: string) => {
-    setStats((prev) => ({
-      ...prev,
+    const nextStats: SessionStats = {
+      ...statsRef.current,
       safeCollected: {
-        ...prev.safeCollected,
-        [substanceId]: (prev.safeCollected[substanceId] || 0) + 1,
+        ...statsRef.current.safeCollected,
+        [substanceId]: (statsRef.current.safeCollected[substanceId] || 0) + 1,
       },
-    }));
+    };
+    statsRef.current = nextStats;
+    setStats(nextStats);
   }, []);
 
   const handleHitHazard = useCallback(() => {
-    setStats((prev) => ({ ...prev, hazardsHit: prev.hazardsHit + 1 }));
+    const nextStats: SessionStats = {
+      ...statsRef.current,
+      hazardsHit: statsRef.current.hazardsHit + 1,
+    };
+    statsRef.current = nextStats;
+    setStats(nextStats);
   }, []);
 
   const handleStompEnemy = useCallback(() => {
-    setStats((prev) => ({ ...prev, enemiesStomped: prev.enemiesStomped + 1 }));
+    const nextStats: SessionStats = {
+      ...statsRef.current,
+      enemiesStomped: statsRef.current.enemiesStomped + 1,
+    };
+    statsRef.current = nextStats;
+    setStats(nextStats);
   }, []);
 
   const launchLevel = (levelIdx: number, resetStats: boolean) => {
     const freshLevels = createLevels();
     setLevels(freshLevels);
+    selectedLevelIndexRef.current = levelIdx;
     setSelectedLevelIndex(levelIdx);
     if (resetStats) {
       setCarryHp(3);
       setCarryShield(false);
       setCarryAmmo(levelIdx === 2 ? 3 : 0);
+      statsRef.current = INITIAL_STATS;
       setStats(INITIAL_STATS);
       setUsedQuizIds(new Set());
     }
@@ -317,13 +315,14 @@ export default function App() {
     totalCount: number;
   }) => {
     const nextIdx = selectedLevelIndex + 1;
-    const updatedScore = stats.score + rewards.bonusPoints;
+    const updatedScore = statsRef.current.score + rewards.bonusPoints;
     const updatedStats: SessionStats = {
-      ...stats,
+      ...statsRef.current,
       score: updatedScore,
-      quizCorrect: stats.quizCorrect + rewards.correctCount,
-      quizTotal: stats.quizTotal + rewards.totalCount,
+      quizCorrect: statsRef.current.quizCorrect + rewards.correctCount,
+      quizTotal: statsRef.current.quizTotal + rewards.totalCount,
     };
+    statsRef.current = updatedStats;
     setStats(updatedStats);
     updateHighScore(updatedScore);
     syncScoreToLeaderboards(updatedStats, nextIdx + 1);
@@ -336,7 +335,7 @@ export default function App() {
   };
 
   const handleTriggerQuiz = useCallback(() => {
-    const levelNumber = selectedLevelIndex + 1;
+    const levelNumber = selectedLevelIndexRef.current + 1;
     const pool = QUIZ_QUESTIONS.filter(
       (q) => !usedQuizIds.has(q.id) && (q.levelHint === levelNumber || !q.levelHint)
     );
@@ -348,70 +347,32 @@ export default function App() {
     setUsedQuizIds((prev) => new Set(prev).add(chosen.id));
     setActiveQuiz(chosen);
     setStatus('QUIZ_MODAL');
-  }, [selectedLevelIndex, usedQuizIds]);
+  }, [usedQuizIds]);
 
   const handleQuizComplete = (correct: boolean) => {
     setActiveQuiz(null);
-    setStats((prev) => {
-      const nextScore = prev.score + (correct ? 300 : 0);
-      updateHighScore(nextScore);
-      return {
-        ...prev,
-        score: nextScore,
-        quizCorrect: prev.quizCorrect + (correct ? 1 : 0),
-        quizTotal: prev.quizTotal + 1,
-      };
-    });
+    const nextScore = statsRef.current.score + (correct ? 300 : 0);
+    const nextStats: SessionStats = {
+      ...statsRef.current,
+      score: nextScore,
+      quizCorrect: statsRef.current.quizCorrect + (correct ? 1 : 0),
+      quizTotal: statsRef.current.quizTotal + 1,
+    };
+    statsRef.current = nextStats;
+    setStats(nextStats);
+    updateHighScore(nextScore);
     window.dispatchEvent(new CustomEvent('quiz-resolved', { detail: { correct } }));
     setStatus('PLAYING');
   };
 
-  const handleSignInGoogle = async () => {
-    setAuthError(null);
-    setSyncStatus(null);
-    setAuthLoading(true);
-    try {
-      const user = await signInWithGoogle();
-      const chosenName = sanitizeNickname(
-        playerName && playerName !== 'Mario Peneliti'
-          ? playerName
-          : user.displayName || 'Mario Peneliti'
-      );
-      setPlayerName(chosenName);
-      try {
-        localStorage.setItem('petualangan_zat_nickname', chosenName);
-      } catch {
-        // Ignore
-      }
-
-      // Immediately register or update player's entry in Firestore Leaderboard
-      const scoreToSave = Math.max(stats.score, localBest?.score ?? 0);
-      await submitLeaderboardScore({
-        playerName: chosenName,
-        score: scoreToSave,
-        highestLevel: Math.max(selectedLevelIndex + 1, localBest?.highestLevel ?? 1),
-        bossDefeated: Boolean(stats.bossDefeated || localBest?.bossDefeated),
-        quizCorrect: Math.max(stats.quizCorrect, localBest?.quizCorrect ?? 0),
-        quizTotal: Math.max(stats.quizTotal, localBest?.quizTotal ?? 0),
-      });
-      setSyncStatus(`Berhasil masuk sebagai ${chosenName} dan terdaftar di papan peringkat!`);
-    } catch (err) {
-      setAuthError(
-        err instanceof Error ? err.message : 'Gagal masuk dengan Google. Silakan coba kembali.'
-      );
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
   const handleSyncNow = async () => {
-    if (!currentUser) return;
-    setAuthError(null);
+    setSyncError(null);
     setSyncStatus(null);
     const chosenName = sanitizeNickname(playerName);
     const scoreToSave = Math.max(stats.score, localBest?.score ?? 0);
     try {
       await submitLeaderboardScore({
+        playerId,
         playerName: chosenName,
         score: scoreToSave,
         highestLevel: Math.max(selectedLevelIndex + 1, localBest?.highestLevel ?? 1),
@@ -421,16 +382,10 @@ export default function App() {
       });
       setSyncStatus('Nama dan skor berhasil diperbarui di daftar pemain skor terbanyak.');
     } catch (err) {
-      setAuthError(
+      setSyncError(
         err instanceof Error ? err.message : 'Gagal memperbarui skor ke papan peringkat.'
       );
     }
-  };
-
-  const handleSignOut = async () => {
-    setSyncStatus(null);
-    setAuthError(null);
-    await logoutUser();
   };
 
   const handleToggleMute = () => {
@@ -449,10 +404,9 @@ export default function App() {
   const hearts = useMemo(() => Array.from({ length: hud.maxHp }, (_, i) => i < hud.hp), [hud.hp, hud.maxHp]);
 
   const currentRankPosition = useMemo(() => {
-    if (!currentUser) return null;
-    const idx = leaderboardEntries.findIndex((e) => e.uid === currentUser.uid);
+    const idx = leaderboardEntries.findIndex((e) => e.playerId === playerId);
     return idx >= 0 ? idx + 1 : null;
-  }, [currentUser, leaderboardEntries]);
+  }, [playerId, leaderboardEntries]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
@@ -537,32 +491,11 @@ export default function App() {
                 if (status === 'PLAYING') setStatus('PAUSED');
                 setShowEncyclopedia(true);
               }}
-              className="hidden md:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <BookOpen className="w-4 h-4" />
-              <span>Pustaka Zat</span>
+              <span className="hidden sm:inline">Pustaka Zat</span>
             </button>
-
-            {!currentUser ? (
-              <button
-                onClick={handleSignInGoogle}
-                disabled={authLoading}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
-              >
-                <GoogleIcon className="w-3.5 h-3.5" />
-                <span>{authLoading ? 'Masuk...' : 'Sign In Google'}</span>
-              </button>
-            ) : (
-              status !== 'PLAYING' &&
-              status !== 'PAUSED' && (
-                <button
-                  onClick={() => setShowLeaderboard(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-950/70 border border-emerald-700 text-emerald-300 text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  <span>{sanitizeNickname(playerName)}</span>
-                </button>
-              )
-            )}
 
             {(status === 'PLAYING' || status === 'PAUSED') && (
               <button
@@ -586,11 +519,7 @@ export default function App() {
             highScore={highScore}
             topPlayers={leaderboardEntries}
             playerName={playerName}
-            currentUser={currentUser}
-            authLoading={authLoading}
-            authError={authError}
             onChangePlayerName={handleNicknameChange}
-            onSignInGoogle={handleSignInGoogle}
             onSelectLevel={setSelectedLevelIndex}
             onStartGame={handleStartFromTitle}
             onOpenStoryIntro={() => setStatus('STORY_INTRO')}
@@ -681,25 +610,21 @@ export default function App() {
                   setCarryHp(hp);
                   setCarryShield(shield);
                   setCarryAmmo(ammo);
-                  const completedScore = stats.score + 300;
-                  syncScoreToLeaderboards(
-                    { ...stats, score: completedScore },
-                    selectedLevelIndex + 1
-                  );
+                  syncScoreToLeaderboards(statsRef.current, selectedLevelIndexRef.current + 1);
                   setStatus('LEVEL_COMPLETE');
                 }}
                 onBossDefeated={() => {
                   const victoryStats: SessionStats = {
-                    ...stats,
-                    score: stats.score + 250,
+                    ...statsRef.current,
                     bossDefeated: true,
                   };
-                  setStats((prev) => ({ ...prev, bossDefeated: true }));
+                  statsRef.current = victoryStats;
+                  setStats(victoryStats);
                   syncScoreToLeaderboards(victoryStats, 3);
                   setStatus('VICTORY');
                 }}
                 onGameOver={() => {
-                  syncScoreToLeaderboards(stats, selectedLevelIndex + 1);
+                  syncScoreToLeaderboards(statsRef.current, selectedLevelIndexRef.current + 1);
                   setStatus('GAME_OVER');
                 }}
                 onTogglePause={handleTogglePause}
@@ -862,10 +787,7 @@ export default function App() {
           levelTitle={currentLevel.title}
           stats={stats}
           rankPosition={currentRankPosition}
-          currentUser={currentUser}
-          authLoading={authLoading}
           hasNextLevel={selectedLevelIndex < levels.length - 1}
-          onSignInGoogle={handleSignInGoogle}
           onNextLevel={handleAfterLevelComplete}
           onRetryLevel={retryCurrentLevel}
           onOpenLeaderboard={() => setShowLeaderboard(true)}
@@ -877,17 +799,14 @@ export default function App() {
       {showLeaderboard && (
         <LeaderboardModal
           entries={leaderboardEntries}
+          currentPlayerId={playerId}
           localBest={localBest}
-          currentUser={currentUser}
           playerName={playerName}
-          authLoading={authLoading}
           syncStatus={syncStatus}
+          syncError={syncError}
           onChangePlayerName={handleNicknameChange}
-          onSignInGoogle={handleSignInGoogle}
           onSyncNow={handleSyncNow}
-          onSignOut={handleSignOut}
           onClose={() => setShowLeaderboard(false)}
-          authError={authError}
         />
       )}
 

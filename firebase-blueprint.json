@@ -2,13 +2,13 @@
   "entities": {
     "LeaderboardScore": {
       "title": "LeaderboardScore",
-      "description": "Public top score record for a player in Petualangan Zat (no PII stored).",
+      "description": "Public top score record for a player in Petualangan Mario (no PII stored).",
       "type": "object",
       "properties": {
-        "uid": {
+        "playerId": {
           "type": "string",
-          "description": "Authenticated user UID owning this leaderboard entry.",
-          "minLength": 1,
+          "description": "Unique browser/player identifier owning this leaderboard entry.",
+          "minLength": 8,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
@@ -50,7 +50,7 @@
         }
       },
       "required": [
-        "uid",
+        "playerId",
         "playerName",
         "score",
         "highestLevel",
@@ -67,7 +67,7 @@
       "schema": {
         "$ref": "#/entities/LeaderboardScore"
       },
-      "description": "Public leaderboard entries keyed by user UID."
+      "description": "Public leaderboard entries keyed by playerId."
     }
   }
 }

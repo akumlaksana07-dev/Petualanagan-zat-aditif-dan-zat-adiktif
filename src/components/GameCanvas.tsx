@@ -90,6 +90,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     cameraX: number;
     time: number;
     shootCooldown: number;
+    shakeTimer: number;
+    shakeDuration: number;
+    shakeIntensity: number;
     levelEnded: boolean;
     arenaLocked: boolean;
   } | null>(null);
@@ -97,6 +100,54 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const keysRef = useRef<Record<string, boolean>>({});
   const prevJumpPressedRef = useRef(false);
   const prevShootPressedRef = useRef(false);
+  const bossVictoryTimeoutRef = useRef<number | null>(null);
+
+  const callbacksRef = useRef({
+    onHudUpdate,
+    onScoreDelta,
+    onCollectSafe,
+    onHitHazard,
+    onStompEnemy,
+    onTriggerQuiz,
+    onDiscovery,
+    onLevelComplete,
+    onBossDefeated,
+    onGameOver,
+    onTogglePause,
+  });
+  callbacksRef.current = {
+    onHudUpdate,
+    onScoreDelta,
+    onCollectSafe,
+    onHitHazard,
+    onStompEnemy,
+    onTriggerQuiz,
+    onDiscovery,
+    onLevelComplete,
+    onBossDefeated,
+    onGameOver,
+    onTogglePause,
+  };
+
+  const syncHud = () => {
+    const sim = simRef.current;
+    if (!sim) return;
+    callbacksRef.current.onHudUpdate({
+      hp: sim.player.hp,
+      maxHp: sim.player.maxHp,
+      hasShield: sim.player.hasShield,
+      ammo: sim.player.ammo,
+      boss: sim.boss
+        ? {
+            active: sim.boss.active,
+            hp: sim.boss.hp,
+            maxHp: sim.boss.maxHp,
+            phase: sim.boss.phase,
+            defeated: sim.boss.defeated,
+          }
+        : null,
+    });
+  };
 
   // Initialize or reset simulation when level changes
   useEffect(() => {
@@ -136,11 +187,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       cameraX: 0,
       time: 0,
       shootCooldown: 0,
+      shakeTimer: 0,
+      shakeDuration: 0.1,
+      shakeIntensity: 0,
       levelEnded: false,
       arenaLocked: false,
     };
 
-    onHudUpdate({
+    if (bossVictoryTimeoutRef.current !== null) {
+      window.clearTimeout(bossVictoryTimeoutRef.current);
+      bossVictoryTimeoutRef.current = null;
+    }
+
+    callbacksRef.current.onHudUpdate({
       hp: initialHp,
       maxHp: 3,
       hasShield: initialShield,
@@ -155,7 +214,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         : null,
     });
-  }, [level]);
+  }, [level, initialHp, initialShield, initialAmmo]);
 
   // Listen to custom quiz reward events dispatched by parent App
   useEffect(() => {
@@ -184,26 +243,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return () => window.removeEventListener('quiz-resolved', handleQuizReward);
   }, []);
 
-  const syncHud = () => {
-    const sim = simRef.current;
-    if (!sim) return;
-    onHudUpdate({
-      hp: sim.player.hp,
-      maxHp: sim.player.maxHp,
-      hasShield: sim.player.hasShield,
-      ammo: sim.player.ammo,
-      boss: sim.boss
-        ? {
-            active: sim.boss.active,
-            hp: sim.boss.hp,
-            maxHp: sim.boss.maxHp,
-            phase: sim.boss.phase,
-            defeated: sim.boss.defeated,
-          }
-        : null,
-    });
-  };
-
   // Keyboard listeners
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -214,7 +253,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
       if ((e.code === 'Escape' || e.code === 'KeyP') && !e.repeat) {
         if (statusRef.current === 'PLAYING' || statusRef.current === 'PAUSED') {
-          onTogglePause();
+          callbacksRef.current.onTogglePause();
         }
       }
       keysRef.current[e.code] = true;
@@ -233,7 +272,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, [onTogglePause]);
+  }, []);
 
   // Main Game Loop
   useEffect(() => {
@@ -255,8 +294,83 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           maxLife: 0.7,
           color,
           size: 4 + Math.random() * 4,
+          shape: 'square',
         });
       }
+    };
+
+    const spawnSafeCollectParticles = (x: number, y: number, substanceColor: string) => {
+      const sim = simRef.current;
+      if (!sim) return;
+
+      // 1. Expanding halo ring
+      sim.particles.push({
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        life: 0.38,
+        maxLife: 0.38,
+        color: '#4ADE80',
+        size: 10,
+        shape: 'ring',
+        gravityScale: 0,
+      });
+
+      // 2. Burst of spinning golden & tinted stars
+      const starColors = ['#FACC15', '#4ADE80', substanceColor, '#FEF08A'];
+      for (let i = 0; i < 9; i++) {
+        const angle = (Math.PI * 2 * i) / 9 + (Math.random() * 0.35 - 0.17);
+        const speed = 95 + Math.random() * 115;
+        sim.particles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 75,
+          life: 0.55 + Math.random() * 0.25,
+          maxLife: 0.8,
+          color: starColors[i % starColors.length],
+          size: 5.5 + Math.random() * 3.5,
+          shape: 'star',
+          rotation: Math.random() * Math.PI * 2,
+          vRot: (Math.random() > 0.5 ? 1 : -1) * (4 + Math.random() * 5),
+          gravityScale: 0.35,
+        });
+      }
+
+      // 3. Rising light sparkles
+      for (let i = 0; i < 10; i++) {
+        const ox = (Math.random() - 0.5) * 28;
+        const oy = (Math.random() - 0.5) * 22;
+        sim.particles.push({
+          x: x + ox,
+          y: y + oy,
+          vx: (Math.random() - 0.5) * 55,
+          vy: -65 - Math.random() * 90,
+          life: 0.45 + Math.random() * 0.35,
+          maxLife: 0.8,
+          color: i % 2 === 0 ? '#FFFFFF' : '#A7F3D0',
+          size: 5 + Math.random() * 4,
+          shape: 'sparkle',
+          rotation: Math.random() * Math.PI,
+          vRot: (Math.random() - 0.5) * 3,
+          gravityScale: -0.1,
+        });
+      }
+    };
+
+    const triggerShake = (intensity: number, duration: number) => {
+      const sim = simRef.current;
+      if (!sim) return;
+      const reducedMotion =
+        typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      if (reducedMotion) return;
+      if (intensity >= sim.shakeIntensity || sim.shakeTimer <= 0) {
+        sim.shakeIntensity = intensity;
+      }
+      sim.shakeDuration = Math.max(duration, 0.08);
+      sim.shakeTimer = Math.max(sim.shakeTimer, duration);
     };
 
     const damagePlayer = (reasonLabel: string, detailText: string) => {
@@ -284,8 +398,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       sim.player.hp = Math.max(0, sim.player.hp - 1);
       sim.player.invincibleTimer = 1.6;
       sim.player.vy = -380;
-      onHitHazard();
-      onScoreDelta(-50);
+      callbacksRef.current.onHitHazard();
+      callbacksRef.current.onScoreDelta(-50);
 
       spawnParticles(sim.player.x + 17, sim.player.y + 22, '#EF4444', 16);
       sim.floatingTexts.push({
@@ -296,7 +410,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         life: 1.3,
         maxLife: 1.3,
       });
-      onDiscovery({
+      callbacksRef.current.onDiscovery({
         id: `${Date.now()}`,
         title: `Waspada: ${reasonLabel}`,
         categoryLabel: 'Zat Berbahaya',
@@ -309,7 +423,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       if (sim.player.hp <= 0) {
         sim.levelEnded = true;
-        onGameOver();
+        callbacksRef.current.onGameOver();
       }
     };
 
@@ -320,8 +434,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       boss.hp = Math.max(0, boss.hp - 1);
       boss.hitFlash = 0.35;
       sound.bossHit();
-      onScoreDelta(250);
-      spawnParticles(boss.x + boss.w / 2, boss.y + boss.h / 2, '#FACC15', 22);
+      callbacksRef.current.onScoreDelta(250);
+      const bx = boss.x + boss.w / 2;
+      const by = boss.y + boss.h / 2;
+      spawnParticles(bx, by, '#FACC15', 18);
+      spawnParticles(bx, by, source === 'ammo' ? '#22D3EE' : '#FFFFFF', 12);
+      triggerShake(source === 'ammo' ? 9.5 : 8, 0.25);
 
       const bossFacts = [
         'Nikotin memicu kecanduan dopamin semu!',
@@ -343,7 +461,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         maxLife: 1.6,
       });
 
-      onDiscovery({
+      callbacksRef.current.onDiscovery({
         id: `boss-${Date.now()}`,
         title: 'Serangan Tepat pada Raja Zat Adiktif!',
         categoryLabel: `HP Bos Tersisa ${boss.hp}/${boss.maxHp}`,
@@ -360,10 +478,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         sim.levelEnded = true;
         sim.projectiles = [];
         sound.victory();
-        spawnParticles(boss.x + boss.w / 2, boss.y + boss.h / 2, '#10B981', 35);
+        triggerShake(14, 0.48);
+        spawnParticles(bx, by, '#10B981', 28);
+        spawnParticles(bx, by - 16, '#FACC15', 22);
+        spawnParticles(bx, by + 16, '#38BDF8', 16);
         syncHud();
-        setTimeout(() => {
-          onBossDefeated(sim.player.hp, sim.player.hasShield, sim.player.ammo);
+        bossVictoryTimeoutRef.current = window.setTimeout(() => {
+          bossVictoryTimeoutRef.current = null;
+          callbacksRef.current.onBossDefeated(sim.player.hp, sim.player.hasShield, sim.player.ammo);
         }, 650);
       } else {
         boss.state = 'HURT';
@@ -522,18 +644,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 p.y = s.y + s.h;
                 p.vy = 40;
                 // Check if Question Block was bumped from below!
-                if ('qbRef' in s && s.qbRef) {
+                if (s.qbRef) {
                   const qb = s.qbRef;
                   qb.bumpOffset = 9;
                   sound.bumpBlock();
                   if (!qb.used) {
                     qb.used = true;
                     if (qb.reward === 'quiz') {
-                      onTriggerQuiz();
+                      callbacksRef.current.onTriggerQuiz();
                     } else if (qb.reward === 'vitamin') {
                       p.hasShield = true;
                       sound.powerUp();
-                      onScoreDelta(150);
+                      callbacksRef.current.onScoreDelta(150);
+                      spawnSafeCollectParticles(qb.x + 19, qb.y - 6, '#38BDF8');
                       sim.floatingTexts.push({
                         x: qb.x + 19,
                         y: qb.y - 14,
@@ -542,7 +665,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                         life: 1.3,
                         maxLife: 1.3,
                       });
-                      onDiscovery({
+                      callbacksRef.current.onDiscovery({
                         id: `qb-${Date.now()}`,
                         title: 'Perisai Vitamin & Antioksidan',
                         categoryLabel: 'Pelindung Alami',
@@ -554,7 +677,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     } else if (qb.reward === 'ammo') {
                       p.ammo += 3;
                       sound.powerUp();
-                      onScoreDelta(100);
+                      callbacksRef.current.onScoreDelta(100);
+                      spawnSafeCollectParticles(qb.x + 19, qb.y - 6, '#22D3EE');
                       if (level.id === 3) {
                         qb.respawnTimer = 6.5; // Regenerates in Boss Arena!
                       }
@@ -606,14 +730,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               p.vx = 0;
               p.vy = 0;
               sound.hurt();
-              onHitHazard();
+              callbacksRef.current.onHitHazard();
               syncHud();
             } else {
               p.hp = 0;
               sim.levelEnded = true;
               sound.hurt();
               syncHud();
-              onGameOver();
+              callbacksRef.current.onGameOver();
             }
           }
 
@@ -638,9 +762,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 } else {
                   sound.collectSafe();
                 }
-                onScoreDelta(sub.points);
-                onCollectSafe(sub.id);
-                spawnParticles(item.x + 16, item.y + 16, sub.color, 12);
+                callbacksRef.current.onScoreDelta(sub.points);
+                callbacksRef.current.onCollectSafe(sub.id);
+                spawnSafeCollectParticles(item.x + 16, item.y + 16, sub.color);
                 sim.floatingTexts.push({
                   x: item.x + 16,
                   y: item.y - 8,
@@ -650,7 +774,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   life: 1.2,
                   maxLife: 1.2,
                 });
-                onDiscovery({
+                callbacksRef.current.onDiscovery({
                   id: `${item.id}-${Date.now()}`,
                   title: sub.name,
                   categoryLabel: `${sub.role} · Aman`,
@@ -691,8 +815,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 enemy.defeated = true;
                 p.vy = -440;
                 sound.stomp();
-                onScoreDelta(120);
-                onStompEnemy();
+                callbacksRef.current.onScoreDelta(120);
+                callbacksRef.current.onStompEnemy();
                 const sub = SUBSTANCES[enemy.substanceId];
                 spawnParticles(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, '#F43F5E', 14);
                 sim.floatingTexts.push({
@@ -720,7 +844,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               boss.active = true;
               sim.arenaLocked = true;
               sound.bossHit();
-              onDiscovery({
+              triggerShake(6.5, 0.28);
+              spawnParticles(boss.x + boss.w / 2, boss.y + boss.h / 2, '#A855F7', 20);
+              callbacksRef.current.onDiscovery({
                 id: 'boss-intro',
                 title: 'Bos Akhir: Raja Zat Adiktif (Nikotin, Tar & Narkotika)',
                 categoryLabel: 'Pertarungan Terakhir',
@@ -755,10 +881,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   const dir = p.x < boss.x ? -1 : 1;
                   const hazards = ['Nikotin', 'Tar', 'Alkohol'];
                   const label = hazards[Math.floor(Math.random() * hazards.length)];
+                  const muzzleX = boss.x + boss.w / 2;
+                  const muzzleY = boss.y + 38;
                   sim.projectiles.push({
                     id: `bp-${Date.now()}-${Math.random()}`,
-                    x: boss.x + boss.w / 2,
-                    y: boss.y + 38,
+                    x: muzzleX,
+                    y: muzzleY,
                     vx: dir * (220 * speedMult),
                     vy: -40,
                     r: 11,
@@ -766,11 +894,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     label,
                     color: '#DC2626',
                   });
+                  spawnParticles(muzzleX, muzzleY, '#EF4444', 10);
+                  spawnParticles(muzzleX, muzzleY, '#A855F7', 6);
+                  triggerShake(4.5, 0.14);
+
                   if (boss.phase >= 2) {
                     // Rain an extra hazard droplet from above
+                    const rainX = level.bossArenaX + 120 + Math.random() * 720;
                     sim.projectiles.push({
                       id: `bp-rain-${Date.now()}-${Math.random()}`,
-                      x: level.bossArenaX + 120 + Math.random() * 720,
+                      x: rainX,
                       y: 40,
                       vx: 0,
                       vy: 210,
@@ -779,6 +912,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                       label: 'Formalin',
                       color: '#A855F7',
                     });
+                    spawnParticles(rainX, 44, '#C084FC', 8);
                   }
                 }
 
@@ -801,6 +935,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   boss.vy = 0;
                   boss.state = 'VULNERABLE';
                   boss.stateTimer = 2.4; // Window for player to stomp!
+                  // Ground slam impact particles & screen shake
+                  triggerShake(8.5, 0.25);
+                  spawnParticles(boss.x + 14, 464, '#DC2626', 12);
+                  spawnParticles(boss.x + boss.w - 14, 464, '#94A3B8', 12);
                 }
               } else if (boss.state === 'VULNERABLE') {
                 // Rests briefly so player can safely jump-stomp
@@ -867,8 +1005,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   enemy.defeated = true;
                   consumed = true;
                   sound.stomp();
-                  onScoreDelta(120);
-                  onStompEnemy();
+                  callbacksRef.current.onScoreDelta(120);
+                  callbacksRef.current.onStompEnemy();
                   spawnParticles(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, '#06B6D4', 12);
                   break;
                 }
@@ -910,8 +1048,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (level.goalX !== null && p.x + p.w >= level.goalX - 10) {
             sim.levelEnded = true;
             sound.levelClear();
-            onScoreDelta(300);
-            onLevelComplete(p.hp, p.hasShield, p.ammo);
+            callbacksRef.current.onScoreDelta(300);
+            callbacksRef.current.onLevelComplete(p.hp, p.hasShield, p.ammo);
           }
 
           // Camera tracking
@@ -919,12 +1057,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ? level.bossArenaX
             : Math.max(0, Math.min(level.worldWidth - VIEWPORT_WIDTH, p.x - VIEWPORT_WIDTH * 0.36));
           sim.cameraX += (targetCamX - sim.cameraX) * Math.min(1, dt * 8);
+        }
 
-          // Update particles & floating text
+        // Always update particles, floating text, and screen shake even during boss defeat celebration
+        if (statusRef.current === 'PLAYING') {
+          if (sim.shakeTimer > 0) {
+            sim.shakeTimer = Math.max(0, sim.shakeTimer - dt);
+          }
           sim.particles = sim.particles.filter((pt) => {
             pt.x += pt.vx * dt;
             pt.y += pt.vy * dt;
-            pt.vy += 420 * dt;
+            pt.vy += 420 * (pt.gravityScale ?? 1) * dt;
+            if (pt.vRot && pt.rotation !== undefined) {
+              pt.rotation += pt.vRot * dt;
+            }
             pt.life -= dt;
             return pt.life > 0;
           });
@@ -935,6 +1081,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           });
         }
 
+        const shakeProgress =
+          sim.shakeTimer > 0 && sim.shakeDuration > 0 ? sim.shakeTimer / sim.shakeDuration : 0;
+        const currentAmp = sim.shakeIntensity * shakeProgress;
+        const shakeX = currentAmp > 0.2 ? (Math.random() * 2 - 1) * currentAmp : 0;
+        const shakeY = currentAmp > 0.2 ? (Math.random() * 2 - 1) * currentAmp : 0;
+
         const ctx = canvas.getContext('2d');
         if (ctx) {
           renderGame({
@@ -943,6 +1095,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             player: sim.player,
             cameraX: sim.cameraX,
             time: sim.time,
+            shakeX,
+            shakeY,
             questionBlocks: sim.questionBlocks,
             collectibles: sim.collectibles,
             enemies: sim.enemies,
@@ -958,7 +1112,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
 
     rafId = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(rafId);
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (bossVictoryTimeoutRef.current !== null) {
+        window.clearTimeout(bossVictoryTimeoutRef.current);
+        bossVictoryTimeoutRef.current = null;
+      }
+    };
   }, [level]);
 
   return (

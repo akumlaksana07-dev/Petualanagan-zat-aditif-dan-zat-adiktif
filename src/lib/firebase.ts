@@ -1,17 +1,9 @@
 import { initializeApp } from 'firebase/app';
 import {
-  GoogleAuthProvider,
-  getAuth,
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-  User,
-} from 'firebase/auth';
-import {
   collection,
   doc,
   getDoc,
-  getDocFromServer,
+  getDocsFromServer,
   getFirestore,
   limit,
   onSnapshot,
@@ -27,12 +19,8 @@ import { LeaderboardEntry } from '../types/game';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
 
-const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({
-  prompt: 'select_account',
-});
+const PLAYER_ID_STORAGE_KEY = 'petualangan_zat_player_id';
 
 export enum OperationType {
   CREATE = 'create',
@@ -47,17 +35,6 @@ interface FirestoreErrorInfo {
   error: string;
   operationType: OperationType;
   path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  };
 }
 
 export function handleFirestoreError(
@@ -67,18 +44,6 @@ export function handleFirestoreError(
 ): never {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
-          providerId: provider.providerId,
-          email: provider.email,
-        })) || [],
-    },
     operationType,
     path,
   };
@@ -86,44 +51,34 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Validate connection to Firestore on boot
+export function getOrCreatePlayerId(): string {
+  try {
+    const existing = localStorage.getItem(PLAYER_ID_STORAGE_KEY);
+    if (existing && /^[a-zA-Z0-9_-]{8,128}$/.test(existing)) {
+      return existing;
+    }
+    const randomPart =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().replace(/[^a-zA-Z0-9]/g, '')
+        : `${Date.now()}${Math.random().toString(36).slice(2, 10)}`;
+    const generated = `mario_${randomPart}`.slice(0, 48);
+    localStorage.setItem(PLAYER_ID_STORAGE_KEY, generated);
+    return generated;
+  } catch {
+    return `mario_${Date.now()}`;
+  }
+}
+
+// Validate connection to Firestore on boot using permitted leaderboard query
 export async function testFirestoreConnection(): Promise<void> {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    const q = query(collection(db, 'leaderboard'), where('score', '>=', 0), limit(1));
+    await getDocsFromServer(q);
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error('Please check your Firebase configuration.');
     }
   }
-}
-
-export function subscribeAuth(callback: (user: User | null) => void) {
-  return onAuthStateChanged(auth, callback);
-}
-
-export async function signInWithGoogle(): Promise<User> {
-  try {
-    const result = await signInWithPopup(auth, googleProvider);
-    return result.user;
-  } catch (error: unknown) {
-    const code = (error as { code?: string })?.code || '';
-    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-      throw new Error('Jendela login Google ditutup sebelum proses selesai. Silakan coba lagi.');
-    }
-    if (code === 'auth/popup-blocked') {
-      throw new Error('Popup login diblokir oleh browser. Izinkan popup untuk situs ini lalu coba lagi.');
-    }
-    if (code === 'auth/unauthorized-domain') {
-      throw new Error('Domain aplikasi belum terdaftar pada Authorized Domains Firebase Auth.');
-    }
-    throw error instanceof Error
-      ? error
-      : new Error('Gagal masuk dengan akun Google. Silakan coba lagi.');
-  }
-}
-
-export async function logoutUser(): Promise<void> {
-  await signOut(auth);
 }
 
 export function sanitizeNickname(raw: string): string {
@@ -136,7 +91,6 @@ export function subscribeLeaderboard(
   onError?: (err: unknown) => void
 ) {
   const path = 'leaderboard';
-  // Single-field where + orderBy aligns with Firestore static rule evaluation on resource.data.score
   const q = query(
     collection(db, path),
     where('score', '>=', 0),
@@ -152,7 +106,7 @@ export function subscribeLeaderboard(
         const ts = data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : '';
         return {
           id: d.id,
-          uid: String(data.uid ?? d.id),
+          playerId: String(data.playerId ?? data.uid ?? d.id),
           playerName: String(data.playerName ?? 'Pemain'),
           score: Number(data.score ?? 0),
           highestLevel: Number(data.highestLevel ?? 1),
@@ -175,6 +129,7 @@ export function subscribeLeaderboard(
 }
 
 export async function submitLeaderboardScore(params: {
+  playerId: string;
   playerName: string;
   score: number;
   highestLevel: number;
@@ -182,22 +137,23 @@ export async function submitLeaderboardScore(params: {
   quizCorrect: number;
   quizTotal: number;
 }): Promise<void> {
-  const user = auth.currentUser;
-  if (!user) return;
+  const safeId = /^[a-zA-Z0-9_-]{8,128}$/.test(params.playerId)
+    ? params.playerId
+    : getOrCreatePlayerId();
+  const docPath = `leaderboard/${safeId}`;
+  const docRef = doc(db, 'leaderboard', safeId);
 
-  const docPath = `leaderboard/${user.uid}`;
-  const docRef = doc(db, 'leaderboard', user.uid);
   const safeScore = Math.max(0, Math.min(1000000, Math.floor(params.score)));
   const safeLevel = Math.max(1, Math.min(3, Math.floor(params.highestLevel)));
   const safeQuizTotal = Math.max(0, Math.min(500, Math.floor(params.quizTotal)));
   const safeQuizCorrect = Math.max(0, Math.min(safeQuizTotal, Math.floor(params.quizCorrect)));
-  const safeName = sanitizeNickname(params.playerName || user.displayName || 'Mario Peneliti');
+  const safeName = sanitizeNickname(params.playerName);
 
   try {
     const snap = await getDoc(docRef);
     if (!snap.exists()) {
       await setDoc(docRef, {
-        uid: user.uid,
+        playerId: safeId,
         playerName: safeName,
         score: safeScore,
         highestLevel: safeLevel,

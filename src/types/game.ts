@@ -11,6 +11,7 @@ export type GameStatus =
 
 export interface LeaderboardEntry {
   id: string;
+  playerId: string;
   playerName: string;
   score: number;
   highestLevel: number;
@@ -18,7 +19,6 @@ export interface LeaderboardEntry {
   quizCorrect: number;
   quizTotal: number;
   updatedAt: string;
-  uid?: string;
 }
 
 export type SubstanceCategory =
@@ -164,6 +164,10 @@ export interface Particle {
   maxLife: number;
   color: string;
   size: number;
+  shape?: 'square' | 'star' | 'sparkle' | 'ring';
+  rotation?: number;
+  vRot?: number;
+  gravityScale?: number;
 }
 
 export interface FloatingText {

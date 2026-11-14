@@ -7,7 +7,7 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() >= 8 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
@@ -18,13 +18,9 @@ service cloud.firestore {
       return resource.data;
     }
 
-    function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
-    }
-
     function isValidLeaderboardScore(data) {
       return data.keys().hasAll([
-          'uid',
+          'playerId',
           'playerName',
           'score',
           'highestLevel',
@@ -35,7 +31,7 @@ service cloud.firestore {
           'updatedAt'
         ])
         && data.keys().hasOnly([
-          'uid',
+          'playerId',
           'playerName',
           'score',
           'highestLevel',
@@ -45,10 +41,10 @@ service cloud.firestore {
           'createdAt',
           'updatedAt'
         ])
-        && data.uid is string
-        && data.uid.size() >= 1
-        && data.uid.size() <= 128
-        && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.playerId is string
+        && data.playerId.size() >= 8
+        && data.playerId.size() <= 128
+        && data.playerId.matches('^[a-zA-Z0-9_\\-]+$')
         && data.playerName is string
         && data.playerName.size() >= 1
         && data.playerName.size() <= 36
@@ -79,19 +75,16 @@ service cloud.firestore {
       allow list: if resource.data.score is int
         && resource.data.score >= 0;
 
-      allow create: if isSignedIn()
-        && isValidId(entryId)
-        && entryId == request.auth.uid
+      // Players submit & update their own score record by playerId without requiring login
+      allow create: if isValidId(entryId)
         && isValidLeaderboardScore(incoming())
-        && incoming().uid == request.auth.uid
+        && incoming().playerId == entryId
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
 
-      allow update: if isSignedIn()
-        && isValidId(entryId)
-        && entryId == request.auth.uid
+      allow update: if isValidId(entryId)
         && isValidLeaderboardScore(incoming())
-        && incoming().uid == existing().uid
+        && incoming().playerId == existing().playerId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().score >= existing().score
