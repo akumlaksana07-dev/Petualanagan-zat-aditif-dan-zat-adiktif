@@ -1,0 +1,112 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isValidLeaderboardScore(data) {
+      return data.keys().hasAll([
+          'uid',
+          'playerName',
+          'score',
+          'highestLevel',
+          'bossDefeated',
+          'quizCorrect',
+          'quizTotal',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'playerName',
+          'score',
+          'highestLevel',
+          'bossDefeated',
+          'quizCorrect',
+          'quizTotal',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.uid.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.playerName is string
+        && data.playerName.size() >= 1
+        && data.playerName.size() <= 36
+        && data.score is int
+        && data.score >= 0
+        && data.score <= 1000000
+        && data.highestLevel is int
+        && data.highestLevel >= 1
+        && data.highestLevel <= 3
+        && data.bossDefeated is bool
+        && data.quizCorrect is int
+        && data.quizCorrect >= 0
+        && data.quizCorrect <= 500
+        && data.quizTotal is int
+        && data.quizTotal >= 0
+        && data.quizTotal <= 500
+        && data.quizCorrect <= data.quizTotal
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /leaderboard/{entryId} {
+      // Public top-score reads restricted to valid leaderboard documents (no PII stored)
+      allow get: if isValidId(entryId)
+        && resource.data.score is int
+        && resource.data.score >= 0;
+
+      allow list: if resource.data.score is int
+        && resource.data.score >= 0
+        && resource.data.highestLevel >= 1;
+
+      allow create: if isSignedIn()
+        && isValidId(entryId)
+        && entryId == request.auth.uid
+        && isValidLeaderboardScore(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && isValidId(entryId)
+        && entryId == request.auth.uid
+        && isValidLeaderboardScore(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().score >= existing().score
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'playerName',
+          'score',
+          'highestLevel',
+          'bossDefeated',
+          'quizCorrect',
+          'quizTotal',
+          'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+  }
+}

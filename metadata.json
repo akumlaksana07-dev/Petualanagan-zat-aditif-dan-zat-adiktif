@@ -1,0 +1,6 @@
+{
+  "name": "Petualangan Zat: Aditif & Adiktif",
+  "description": "Game platformer edukasi bergaya Mario Bros untuk mempelajari materi IPA Zat Aditif dan Zat Adiktif dengan tantangan mengumpulkan zat aman, menghindari zat berbahaya, dan melawan Bos Akhir Zat Adiktif.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

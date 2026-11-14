@@ -1,0 +1,73 @@
+{
+  "entities": {
+    "LeaderboardScore": {
+      "title": "LeaderboardScore",
+      "description": "Public top score record for a player in Petualangan Zat (no PII stored).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Authenticated user UID owning this leaderboard entry.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "playerName": {
+          "type": "string",
+          "description": "Display nickname shown on the public leaderboard.",
+          "minLength": 1,
+          "maxLength": 36
+        },
+        "score": {
+          "type": "integer",
+          "description": "Highest score achieved by the player."
+        },
+        "highestLevel": {
+          "type": "integer",
+          "description": "Highest level reached (1 to 3)."
+        },
+        "bossDefeated": {
+          "type": "boolean",
+          "description": "Whether the player has defeated the Final Boss."
+        },
+        "quizCorrect": {
+          "type": "integer",
+          "description": "Total correct quiz answers in the best run."
+        },
+        "quizTotal": {
+          "type": "integer",
+          "description": "Total quiz attempts in the best run."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the record was first created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the record was last updated."
+        }
+      },
+      "required": [
+        "uid",
+        "playerName",
+        "score",
+        "highestLevel",
+        "bossDefeated",
+        "quizCorrect",
+        "quizTotal",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/leaderboard/{entryId}": {
+      "schema": {
+        "$ref": "#/entities/LeaderboardScore"
+      },
+      "description": "Public leaderboard entries keyed by user UID."
+    }
+  }
+}
